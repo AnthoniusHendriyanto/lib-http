@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout the repository
+      - uses: actions/checkout@v4
+
+      # Set up Go environment
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.18'  # Set this to the Go version you are using
+
+      # Step 1: Run Go tests
+      - name: Run Go tests
+        run: go test ./...
+
+      # Step 2: Check for outdated dependencies
+      - name: Check outdated Go dependencies
+        run: go list -m -u all
+
+      # Step 3: Determine version bump based on commit message
+      - name: Bump version
+        if: github.ref == 'refs/heads/main' && success()
+        run: |
+          # Fetch the latest tags
+          git fetch --tags
+
+          # Get the latest tag, default to v0.0.0 if none exist
+          latest_tag=$(git describe --tags $(git rev-list --tags --max-count=1) || echo "v0.0.0")
+          echo "Latest tag: $latest_tag"
+
+          # Extract commit message from the last commit
+          commit_message=$(git log -1 --pretty=%B)
+          echo "Commit message: $commit_message"
+
+          # Determine version bump based on commit message
+          if [[ "$commit_message" == *"BREAKING CHANGE:"* ]]; then
+            version_type="major"
+          elif [[ "$commit_message" == *"feat:"* ]]; then
+            version_type="minor"
+          elif [[ "$commit_message" == *"fix:"* ]]; then
+            version_type="patch"
+          else
+            echo "No version bump required"
+            exit 0
+          fi
+          echo "Version type: $version_type"
+
+          # Split latest tag into major, minor, and patch components
+          IFS='.' read -r major minor patch <<< "${latest_tag#v}"
+
+          # Bump the version based on the commit type
+          if [ "$version_type" == "major" ]; then
+            new_version="v$((major+1)).0.0"
+          elif [ "$version_type" == "minor" ]; then
+            new_version="v$major.$((minor+1)).0"
+          elif [ "$version_type" == "patch" ]; then
+            new_version="v$major.$minor.$((patch+1))"
+          fi
+
+          echo "New version: $new_version"
+
+          # Create a new tag and push it
+          git tag $new_version
+          git push origin $new_version
